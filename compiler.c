@@ -9,11 +9,16 @@
 #define WRITE_INST 0
 
 int bus_width, al, pc, scr, is_depth, os_depth, freq;
+char item[100];
 
 hwc hw;
 Config config;
 
-int load_is_narrow_bus(int num_rows, int input_map_position)
+int load_is(
+    int num_rows,
+    int in_pos_h,
+    int input_addr_base //actural address = input_addr_base + (h * input_width + w) * acc_times_c + c
+);
 
 void conv2d(
     int input_size,
@@ -42,32 +47,23 @@ int main(){
     return 0;
 }
 
-int load_is_narrow_bus(int num_rows, int input_map_position) {
-    for (int i_rows = 0; i_rows < num_rows; ++i_rows) {
-        input_map_position += (config.BUS_WIDTH / config.DATA_WIDTH) * (acc0.InputSRAMWidth / acc0.BusWidth - 1);
-        for (int j_reg = acc0.InputSRAMWidth / acc0.BusWidth - 1; j_reg >= 0; --j_reg) {
+int load_is(    
+    int num_rows,
+    int in_pos_h,
+    int input_addr_base) 
+{
+    int in_pos_w = 0;
+    int in_pos_c = 0;
+    int input_addr_bias = 0;
+    for (int i_rows = 0; i_rows < num_rows; ++i_rows) {//一个row对应一个addr
+        input_addr_bias = i_rows;
+        for (int j_reg = hw.InputSRAMWidth / hw.BusWidth - 1; j_reg >= 0; --j_reg) {
             if (j_reg != 0) {
-                instructionCount.Linp++;
-                if (WRITE_INST){
-                    if (VERIFY) {
-                        sprintf(item, "Linp\t <pos> %d\t <is_addr> %d\t <input_map> %d\n", j_reg, i_rows, input_map_position);
-                        PushInstStack(&inst_stack, item, 0, 0);
-                    } else {
-                        sprintf(item, "Linp\t <pos> %d\n", j_reg);
-                        PushInstStack(&inst_stack, item, 0, 0);
-                    }
-                }
+                sprintf(item, "Linp\t <pos> %d\t <is_addr> %d\t <input_map> %d\n", j_reg, i_rows, input_map_position);
+                PushInstStack(&inst_stack, item, 0, 0);
             } else {
-                instructionCount.Lin++;
-                if (WRITE_INST){
-                    if (VERIFY) {
-                        sprintf(item, "Lin\t\t <pos> %d\t <is_addr> %d\t <input_map> %d\n", j_reg, i_rows, input_map_position);
-                        PushInstStack(&inst_stack, item, 0, 0);
-                    } else {
-                        sprintf(item, "Lin\t\t <pos> %d\t <is_addr> %d\n", j_reg, i_rows);
-                        PushInstStack(&inst_stack, item, 0, 0);
-                    }
-                }
+                sprintf(item, "Lin\t\t <pos> %d\t <is_addr> %d\t <input_map> %d\n", j_reg, i_rows, input_map_position);
+                PushInstStack(&inst_stack, item, 0, 0);
             }
             input_map_position -= (config.BUS_WIDTH / config.DATA_WIDTH);
             // 注意: 每个channel的最后一行可能需要特殊处理
@@ -89,6 +85,8 @@ void conv2d(
     int output_addr_base
 ){
     //basic calculation
+    int input_height = input_size;
+    int input_width = input_size;
     int output_size = (input_size + 2 * padding - kernel_size) / stride + 1;
 
     int acc_times_h = kernel_size;
@@ -98,19 +96,19 @@ void conv2d(
     int acc_times = acc_times_c * acc_times_h * acc_times_w;
     int para_times = ceil((float)output_channel / hw.PC);
 
-    int input_colomns_per_IS_load = hw.InputSRAMDepth / acc_times_c;
-    if (input_colomns_per_IS_load > input_size * input_size)
-        input_colomns_per_IS_load = input_size * input_size;
-    int IS_load_times_per_conv = (int)ceil((float)input_size * input_size / input_colomns_per_IS_load);
+    int input_height_per_IS_load = hw.InputSRAMDepth / acc_times_c / input_width;
+    if (input_height_per_IS_load > input_height)
+        input_height_per_IS_load = input_height;
+    int IS_load_times_per_conv = (int)ceil((float)input_height / input_height_per_IS_load);
 
-    int* IS_load_columns = (int*)malloc(IS_load_times_per_conv * sizeof(int));
+    int* IS_load_heights = (int*)malloc(IS_load_times_per_conv * sizeof(int));
 
     for (int i = 0; i < IS_load_times_per_conv; ++i) {
-        IS_load_columns[i] = input_colomns_per_IS_load;  // 默认每次载入处理最大列数
+        IS_load_heights[i] = input_height_per_IS_load;  // 默认每次载入处理最大行数
     }
     // 如果最后一次载入不能满载，则调整最后一次载入的列数
-    if ((input_size * input_size) % input_colomns_per_IS_load != 0) {
-        IS_load_columns[IS_load_times_per_conv - 1] = (input_size * input_size) % input_colomns_per_IS_load;
+    if ((input_height) % input_height_per_IS_load != 0) {
+        IS_load_heights[IS_load_times_per_conv - 1] = (input_height) % input_height_per_IS_load;
     }
 
     int weight_update_times_per_conv = (int)ceil((float)acc_times / config.SCR) * para_times;
