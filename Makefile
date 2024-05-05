@@ -5,7 +5,7 @@ CC=gcc
 CFLAGS=-fdiagnostics-color=always -g -Wall
 
 # Source files
-SOURCES=compiler.c hw_config.c 
+SOURCES=compiler.c hw_config.c inst_stack.c
 
 # Object files
 OBJECTS=$(SOURCES:.c=.o)

@@ -4,6 +4,7 @@
 #include <math.h>
 #include <string.h>
 #include "hw_config.h"
+#include "inst_stack.h"
 
 #define min(a,b) ((a) < (b) ? (a) : (b))
 #define WRITE_INST 0
@@ -11,13 +12,28 @@
 int bus_width, al, pc, scr, is_depth, os_depth, freq;
 char item[100];
 
+InstStack inst_stack;
 hwc hw;
 Config config;
+
+int input_height;
+int input_width;
+int output_size;
+int acc_times_h;
+int acc_times_w;
+int acc_times_c;
+int acc_times;
+int para_times;
 
 int load_is(
     int num_rows,
     int in_pos_h,
     int input_addr_base //actural address = input_addr_base + (h * input_width + w) * acc_times_c + c
+);
+
+int load_cim(
+    int num_ls,
+    int num_channel
 );
 
 void conv2d(
@@ -33,7 +49,7 @@ void conv2d(
 );
 
 int main(){
-    bus_width = 128;
+    bus_width = 64;
     al = 64;
     pc = 8;
     scr = 8;
@@ -41,8 +57,11 @@ int main(){
     os_depth = 1024;
     freq = 500;
     InitConfig(&config, bus_width, al, pc, scr, is_depth, os_depth, freq);
+    PrintConfig(&config);
     Inithwc(&hw, config);
-    conv2d(112,64,128,3,1,2,0,0,0);
+    Printhwc(&hw);
+    InitInstStack(&inst_stack, 10, "inst.txt");
+    conv2d(56,128,256,3,1,2,0,0,0);
 
     return 0;
 }
@@ -50,27 +69,54 @@ int main(){
 int load_is(    
     int num_rows,
     int in_pos_h,
-    int input_addr_base) 
-{
+    int input_addr_base) {
+    int in_pos_h_0 = in_pos_h;
     int in_pos_w = 0;
     int in_pos_c = 0;
     int input_addr_bias = 0;
     for (int i_rows = 0; i_rows < num_rows; ++i_rows) {//一个row对应一个addr
-        input_addr_bias = i_rows;
+        input_addr_bias = i_rows;       //actural address = input_addr_base + (h * input_width + w) * acc_times_c + c
+        in_pos_c = input_addr_bias % acc_times_c;
+        in_pos_w = input_addr_bias / acc_times_c % input_width;
+        in_pos_h = in_pos_h_0 + input_addr_bias / acc_times_c / input_width;
         for (int j_reg = hw.InputSRAMWidth / hw.BusWidth - 1; j_reg >= 0; --j_reg) {
             if (j_reg != 0) {
-                sprintf(item, "Linp\t <pos> %d\t <is_addr> %d\t <input_map> %d\n", j_reg, i_rows, input_map_position);
+                sprintf(item, "Linp\t <pos> %d\t <is_addr> %d\t <h> %d\t <w> %d\t <c> %d\n", j_reg, i_rows, in_pos_h, in_pos_w, in_pos_c);
                 PushInstStack(&inst_stack, item, 0, 0);
             } else {
-                sprintf(item, "Lin\t\t <pos> %d\t <is_addr> %d\t <input_map> %d\n", j_reg, i_rows, input_map_position);
+                sprintf(item, "Lin\t\t <pos> %d\t <is_addr> %d\t <h> %d\t <w> %d\t <c> %d\n", j_reg, i_rows, in_pos_h, in_pos_w, in_pos_c);
                 PushInstStack(&inst_stack, item, 0, 0);
             }
-            input_map_position -= (config.BUS_WIDTH / config.DATA_WIDTH);
-            // 注意: 每个channel的最后一行可能需要特殊处理
         }
-        input_map_position += (acc0.InputSRAMWidth / config.DATA_WIDTH) + (config.BUS_WIDTH / config.DATA_WIDTH);
     }
-    return input_map_position;
+    return in_pos_h;
+}
+
+int load_cim(
+    int num_ls,
+    int num_channel) {
+    for (int i_channel = 0; i_channel < num_channel; i_channel++){
+        for (int j_ls = 0; j_ls < num_ls; j_ls++){
+            for (int k_reg = hw.CIMsWriteWidth / hw.BusWidth * config.WEIGHT_ROW - 1; k_reg >= 0; k_reg--){
+                int row_reg = (hw.CIMsWriteWidth / hw.BusWidth * config.WEIGHT_ROW - 1 - k_reg) / (hw.CIMsWriteWidth / hw.BusWidth);
+                int pause_reg = k_reg % (hw.CIMsWriteWidth / hw.BusWidth);
+                if (pause_reg == 0) {
+                    sprintf(item, "Lwt\t\t <pos> %d\t <cm_addr> %d\t <n> %d\t <h> %d\t <w> %d\t <c> %d\n", 
+                    k_reg % (hw.CIMsWriteWidth / hw.BusWidth), 
+                    i_channel * config.SCR * config.WEIGHT_ROW + row_reg * config.SCR + j_ls, 
+                    weight_map_position);
+                    PushInstStack(&inst_stack, item, 0, 0);
+                } else {
+                    sprintf(item, "Lwtp\t <pos> %d\t <cm_addr> %d\t <n> %d\t <h> %d\t <w> %d\t <c> %d\n", 
+                    k_reg % (hw.CIMsWriteWidth / hw.BusWidth), 
+                    i_channel * config.SCR * config.WEIGHT_ROW + row_reg * config.SCR + j_ls,
+                    weight_map_position);
+                    PushInstStack(&inst_stack, item, 0, 0);
+                }
+            }
+        }
+    }
+    return i_block;
 }
 
 void conv2d(
@@ -82,19 +128,18 @@ void conv2d(
     int padding,
     int input_addr_base,
     int weight_addr_base,
-    int output_addr_base
-){
+    int output_addr_base) {
     //basic calculation
-    int input_height = input_size;
-    int input_width = input_size;
-    int output_size = (input_size + 2 * padding - kernel_size) / stride + 1;
+    input_height = input_size;
+    input_width = input_size;
+    output_size = (input_size + 2 * padding - kernel_size) / stride + 1;
 
-    int acc_times_h = kernel_size;
-    int acc_times_w = kernel_size;
-    int acc_times_c = ceil((float)input_channel / hw.AL);
+    acc_times_h = kernel_size;
+    acc_times_w = kernel_size;
+    acc_times_c = ceil((float)input_channel / hw.AL);
 
-    int acc_times = acc_times_c * acc_times_h * acc_times_w;
-    int para_times = ceil((float)output_channel / hw.PC);
+    acc_times = acc_times_c * acc_times_h * acc_times_w;
+    para_times = ceil((float)output_channel / hw.PC);
 
     int input_height_per_IS_load = hw.InputSRAMDepth / acc_times_c / input_width;
     if (input_height_per_IS_load > input_height)
@@ -146,7 +191,7 @@ void conv2d(
 
 
     // 释放内存
-    free(IS_load_columns);
+    free(IS_load_heights);
     free(weight_update_ls);
     //return 0;
 };
