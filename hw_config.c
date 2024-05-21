@@ -13,7 +13,7 @@ void InitConfig(Config *config, int bus_width, int al, int pc, int scr, int is_d
     config->PIPELINE_STAGES = 0;
 
     config->DATA_WIDTH = 8;
-    config->RESULT_WIDTH = 32;
+    config->RESULT_WIDTH = 8;
 
     config->WEIGHT_ROW = 4;
     config->WEIGHT_COL = 2;
@@ -52,7 +52,7 @@ void Inithwc(hwc *hw, Config config) {
     hw->LocalSwitchrows = config.SCR;
     hw->InputSRAMWidth = config.CIMsComputeWidth;
     hw->InputSRAMDepth = config.IS_DEPTH;
-    hw->OutputSRAMWidth = config.PC * config.DATA_WIDTH * 4;
+    hw->OutputSRAMWidth = config.PC * config.RESULT_WIDTH;
     hw->OutputSRAMDepth = config.OS_DEPTH;
     hw->IS_size = hw->InputSRAMWidth * hw->InputSRAMDepth / config.DATA_WIDTH / 1024; // kB
     hw->OS_size = hw->OutputSRAMWidth * hw->OutputSRAMDepth / config.DATA_WIDTH / 1024; // kB

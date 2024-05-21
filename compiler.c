@@ -18,7 +18,11 @@ Config config;
 
 int input_height;
 int input_width;
+int kernel_height;
+int kernel_width;
 int output_size;
+int output_width;
+int output_height;
 int acc_times_h;
 int acc_times_w;
 int acc_times_c;
@@ -33,7 +37,24 @@ int load_is(
 
 int load_cim(
     int num_ls,
-    int num_channel
+    int num_channel,
+    int* wt_pos_n,
+    int* wt_pos_hwc
+);
+
+int load_bias(
+    int num_channel,
+    int* wt_pos_n
+);
+
+int load_os(
+    int num_rows,
+    int in_pos_h,
+    int input_addr_base //actural address = input_addr_base + (h * input_width + w) * acc_times_c + c
+);
+
+void set_mul(
+    int multiply_num
 );
 
 void conv2d(
@@ -51,10 +72,10 @@ void conv2d(
 int main(){
     bus_width = 64;
     al = 64;
-    pc = 8;
-    scr = 8;
-    is_depth = 1024;
-    os_depth = 1024;
+    pc = 64;
+    scr = 16;
+    is_depth = 256;
+    os_depth = 256;
     freq = 500;
     InitConfig(&config, bus_width, al, pc, scr, is_depth, os_depth, freq);
     PrintConfig(&config);
@@ -69,7 +90,8 @@ int main(){
 int load_is(    
     int num_rows,
     int in_pos_h,
-    int input_addr_base) {
+    int input_addr_base
+) {
     int in_pos_h_0 = in_pos_h;
     int in_pos_w = 0;
     int in_pos_c = 0;
@@ -94,9 +116,22 @@ int load_is(
 
 int load_cim(
     int num_ls,
-    int num_channel) {
+    int num_channel,
+    int* wt_pos_n,
+    int* wt_pos_hwc
+) {
+    int wt_pos_hwc_0 = *wt_pos_hwc;
+    int wt_pos_n_0 = *wt_pos_n;
+    int wt_pos_h;
+    int wt_pos_w;
+    int wt_pos_c;
     for (int i_channel = 0; i_channel < num_channel; i_channel++){
-        for (int j_ls = 0; j_ls < num_ls; j_ls++){
+        for (int j_ls = 0; j_ls < num_ls; j_ls++){//input_addr_base + (h * input_width + w) * acc_times_c + c
+            *wt_pos_hwc = j_ls+wt_pos_hwc_0;
+            *wt_pos_n = wt_pos_n_0 + i_channel;
+            wt_pos_h = *wt_pos_hwc / acc_times_c / kernel_width;
+            wt_pos_w = *wt_pos_hwc / acc_times_c % kernel_width;
+            wt_pos_c = *wt_pos_hwc % acc_times_c;
             for (int k_reg = hw.CIMsWriteWidth / hw.BusWidth * config.WEIGHT_ROW - 1; k_reg >= 0; k_reg--){
                 int row_reg = (hw.CIMsWriteWidth / hw.BusWidth * config.WEIGHT_ROW - 1 - k_reg) / (hw.CIMsWriteWidth / hw.BusWidth);
                 int pause_reg = k_reg % (hw.CIMsWriteWidth / hw.BusWidth);
@@ -104,19 +139,34 @@ int load_cim(
                     sprintf(item, "Lwt\t\t <pos> %d\t <cm_addr> %d\t <n> %d\t <h> %d\t <w> %d\t <c> %d\n", 
                     k_reg % (hw.CIMsWriteWidth / hw.BusWidth), 
                     i_channel * config.SCR * config.WEIGHT_ROW + row_reg * config.SCR + j_ls, 
-                    weight_map_position);
+                    *wt_pos_n, wt_pos_h, wt_pos_w, wt_pos_c);
                     PushInstStack(&inst_stack, item, 0, 0);
                 } else {
                     sprintf(item, "Lwtp\t <pos> %d\t <cm_addr> %d\t <n> %d\t <h> %d\t <w> %d\t <c> %d\n", 
                     k_reg % (hw.CIMsWriteWidth / hw.BusWidth), 
                     i_channel * config.SCR * config.WEIGHT_ROW + row_reg * config.SCR + j_ls,
-                    weight_map_position);
+                    *wt_pos_n, wt_pos_h, wt_pos_w, wt_pos_c);
                     PushInstStack(&inst_stack, item, 0, 0);
                 }
             }
         }
     }
-    return i_block;
+    return 1;
+}
+
+int load_bias(
+    int num_channel,
+    int* wt_pos_n
+){
+    sprintf(item, "Lbs\t\t <n> %d\n", *wt_pos_n);
+    PushInstStack(&inst_stack, item, 0, 0);
+}
+
+void set_mul(
+    int multiply_num
+){
+    sprintf(item, "Smul\t <num> %d\n", multiply_num);
+    PushInstStack(&inst_stack, item, 0, 0);
 }
 
 void conv2d(
@@ -128,11 +178,18 @@ void conv2d(
     int padding,
     int input_addr_base,
     int weight_addr_base,
-    int output_addr_base) {
+    int output_addr_base
+) {
     //basic calculation
     input_height = input_size;
     input_width = input_size;
+
+    kernel_height = kernel_size;
+    kernel_width = kernel_size;
+
     output_size = (input_size + 2 * padding - kernel_size) / stride + 1;
+    output_height = output_size;
+    output_width = output_size;
 
     acc_times_h = kernel_size;
     acc_times_w = kernel_size;
@@ -188,6 +245,24 @@ void conv2d(
     //     printf("%d ", weight_update_ls[i]);
     // }
     // printf("\n");
+
+    // Main loop
+    for (int i = 0; i < IS_load_times_per_conv; ++i) {
+        int in_pos_h = i * input_height_per_IS_load;
+        load_is(IS_load_heights[i], in_pos_h, input_addr_base);
+
+        for (int j = 0; j < weight_update_times_per_conv; ++j) {
+            int wt_pos_n = 0;
+            int wt_pos_hwc = 0;
+            load_cim(weight_update_ls[j], output_channel, &wt_pos_n, &wt_pos_hwc);
+
+            for (int k = 0; k < config.SCR; ++k) {
+                set_mul(k);
+                sprintf(item, "Calc\t <scr> %d\n", k);
+                PushInstStack(&inst_stack, item, 0, 0);
+            }
+        }
+    }
 
 
     // 释放内存

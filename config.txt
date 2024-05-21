@@ -1,16 +1,17 @@
-AL: 64, PC: 8,  SCR: 8, IS_DEPTH: 1024, OS_DEPTH: 1024, BUS_WIDTH: 64
+Config:
+AL: 64, PC: 64, SCR: 8, IS_DEPTH: 256,  OS_DEPTH: 256,  BUS_WIDTH: 64
 PIPELINE_STAGES: 0,
-DATA_WIDTH: 8,  RESULT_WIDTH: 32
+DATA_WIDTH: 8,  RESULT_WIDTH: 8
 WEIGHT_ROW: 4,  WEIGHT_COL: 2
 SIN_AL: 64,     SIN_PC: 8
-MACRO_ROW: 1,   MACRO_COL: 1
+MACRO_ROW: 8,   MACRO_COL: 1
 CIM_ROW: 256,   CIM_COL: 128
-CIMs_ROW: 256,  CIMs_COL: 128
+CIMs_ROW: 2048, CIMs_COL: 128
 CIMsComputeWidth: 512,  CIMsWriteWidth: 128,    freq: 500
 hwc:
-AL: 64, PC: 8, SCR: 8, BusWidth: 64, freq: 500
+AL: 64, PC: 64, SCR: 8, BusWidth: 64, freq: 500
 PIPELINE_STAGES: 0,
-CIMsWriteWidth: 128, CIMsComputeWidth: 512, CIMsrows: 256
-MACRO_ROW: 1, MACRO_COL: 1, CIMsParaChannel: 8, LocalSwitchrows: 8
-InputSRAMWidth: 512, InputSRAMDepth: 1024, OutputSRAMWidth: 256, OutputSRAMDepth: 1024
-IS_size: 64 kB, OS_size: 32 kB, CIM_size: 4 kB
+CIMsWriteWidth: 128, CIMsComputeWidth: 512, CIMsrows: 2048
+MACRO_ROW: 8, MACRO_COL: 1, CIMsParaChannel: 64, LocalSwitchrows: 8
+InputSRAMWidth: 512, InputSRAMDepth: 256, OutputSRAMWidth: 512, OutputSRAMDepth: 256
+IS_size: 16 kB, OS_size: 16 kB, CIM_size: 32 kB
